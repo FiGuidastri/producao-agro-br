@@ -274,15 +274,15 @@ metric_map = {
 }
 
 # ========= Seção 2) Comparativo entre anos =========
+# ========= Seção 2) Comparativo entre anos =========
 st.header("Comparativo entre anos")
 
 c1, c2, c3 = st.columns([1,1,2])
 with c1:
     metric_comp_label = st.selectbox("Métrica", list(metric_map.keys()), index=3)
 with c2:
-    # sugere últimos dois anos
-    idx_b = len(anos)-1
-    idx_a = max(0, idx_b-1)
+    idx_b = len(anos) - 1
+    idx_a = max(0, idx_b - 1)
     ano_a = st.selectbox("Ano A", anos, index=idx_a)
     ano_b = st.selectbox("Ano B", anos, index=idx_b)
 
@@ -305,7 +305,6 @@ base_b = (
 cmp = pd.merge(base_a, base_b, on="produto_clean", how="outer").fillna(0.0)
 cmp = cmp[~cmp["produto_clean"].str.lower().eq("total")].copy()
 cmp["delta"] = cmp[f"{metric_col}_{ano_b}"] - cmp[f"{metric_col}_{ano_a}"]
-cmp["delta_abs"] = np.abs(cmp["delta"])
 cmp["delta_pct"] = np.where(
     cmp[f"{metric_col}_{ano_a}"] != 0,
     cmp["delta"] / cmp[f"{metric_col}_{ano_a}"],
@@ -319,56 +318,32 @@ fig_group = barh_grouped_sorted(
     x_cols=[f"{metric_col}_{ano_a}", f"{metric_col}_{ano_b}"],
     labels=[(str(ano_a), metric_nd), (str(ano_b), metric_nd)],
     topn=topn,
-    title=f"Top {topn} — {metric_x_title}: {ano_a} × {ano_b} (ordenado pela soma)",
+    title=f"Top {topn} — {metric_comp_label}: {ano_a} × {ano_b} (ordenado pela soma)",
     x_title=metric_x_title,
 )
 st.plotly_chart(fig_group, use_container_width=True)
 
-# gráfico de variação (Δ): maior variação absoluta no topo
-cmp_var = cmp.sort_values("delta_abs", ascending=False).head(topn).copy()
-fig_delta = px.bar(
-    cmp_var,
-    x="delta",
-    y="produto_clean",
-    orientation="h",
-    text=cmp_var["delta"].map(lambda v: fmt_br(v, metric_nd)),
-)
-fig_delta.update_traces(textposition="outside", cliponaxis=False)
-fig_delta.update_layout(
-    title=f"Top {topn} — Variação absoluta (Δ {metric_x_title}) • {ano_b} − {ano_a}",
-    xaxis_title=f"Δ {metric_x_title}",
-    yaxis_title="",
-    yaxis=dict(categoryorder="array", categoryarray=cmp_var["produto_clean"].tolist(), autorange="reversed"),
-    margin=dict(l=10, r=10, t=30, b=10),
-)
-st.plotly_chart(fig_delta, use_container_width=True)
-
-# tabela resumo do comparativo
+# tabela resumo do comparativo (sem gráfico de variação)
 st.dataframe(
-    cmp_var.assign(
-        **{
-            f"{metric_col}_{ano_a}": cmp_var[f"{metric_col}_{ano_a}"],
-            f"{metric_col}_{ano_b}": cmp_var[f"{metric_col}_{ano_b}"],
-        }
-    )[
-        ["produto_clean", f"{metric_col}_{ano_a}", f"{metric_col}_{ano_b}", "delta", "delta_pct"]
-    ].rename(
-        columns={
-            f"{metric_col}_{ano_a}": f"{metric_comp_label} {ano_a}",
-            f"{metric_col}_{ano_b}": f"{metric_comp_label} {ano_b}",
-            "delta": f"Δ {metric_comp_label} ({ano_b} − {ano_a})",
-            "delta_pct": "% Δ",
-        }
-    ).style.format(
-        {f"{metric_comp_label} {ano_a}": "{:,.0f}",
-         f"{metric_comp_label} {ano_b}": "{:,.0f}",
-         f"Δ {metric_comp_label} ({ano_b} − {ano_a})": "{:,.0f}",
-         "% Δ": "{:.1%}"}
-    ),
+    cmp.sort_values(f"{metric_col}_{ano_b}", ascending=False)
+      .head(topn)[["produto_clean", f"{metric_col}_{ano_a}", f"{metric_col}_{ano_b}", "delta", "delta_pct"]]
+      .rename(columns={
+          f"{metric_col}_{ano_a}": f"{metric_comp_label} {ano_a}",
+          f"{metric_col}_{ano_b}": f"{metric_comp_label} {ano_b}",
+          "delta": f"Δ {metric_comp_label} ({ano_b} − {ano_a})",
+          "delta_pct": "% Δ",
+      })
+      .style.format({
+          f"{metric_comp_label} {ano_a}": "{:,.0f}",
+          f"{metric_comp_label} {ano_b}": "{:,.0f}",
+          f"Δ {metric_comp_label} ({ano_b} − {ano_a})": "{:,.0f}",
+          "% Δ": "{:.1%}",
+      }),
     use_container_width=True,
 )
 
 st.divider()
+
 
 # ========= Seção 3) Análise por métrica (um ano) =========
 st.subheader(f"Análise por métrica — Safra {ano_ref} (ordenado do maior para o menor)")
