@@ -51,8 +51,8 @@ def barh_sorted(df, x_col, y_col="produto_clean", topn=10, title="", x_title="",
 
 def barh_grouped_sorted(df, y_col, x_cols, labels, topn=10, title="", x_title=""):
     """
-    Barras horizontais agrupadas (ex.: Realizado vs Projetado), ordenadas
-    pela soma das séries (MAIOR->MENOR) e com eixo Y invertido.
+    Barras horizontais agrupadas (ex.: Ano A vs Ano B), ordenadas pela soma
+    das séries (MAIOR->MENOR) e com eixo Y invertido.
     - x_cols: lista de colunas numéricas
     - labels: lista de tuplas (rótulo_legenda, casas_decimais)
     """
@@ -201,7 +201,7 @@ else:
 tidy, pivot, df_prog = build_all(file_bytes)
 
 anos = sorted(df_prog["ano_safra"].unique().tolist())
-ano_ref = st.sidebar.selectbox("Safra", options=anos, index=len(anos) - 1)
+ano_ref = st.sidebar.selectbox("Safra (para seções 1 e 3)", options=anos, index=len(anos) - 1)
 topn = st.sidebar.slider("Top N nos gráficos", 5, 25, 10, 1)
 min_area_produt = st.sidebar.slider(
     "Área mínima (ha) para ranking de produtividade",
@@ -212,19 +212,20 @@ min_area_produt = st.sidebar.slider(
 )
 
 # ========= Header =========
-st.title(f"Relatório Agro IBGE (LSPA) — Safra {ano_ref}")
+st.title(f"Relatório Agro IBGE (LSPA)")
 st.caption(
-    "Análises por métrica, pendências e comparativos. Gráficos sempre do maior para o menor (topo para baixo)."
+    "Análises por métrica, pendências, comparativo entre anos e rankings. "
+    "Gráficos sempre do maior para o menor (topo para baixo)."
 )
 
-# ========= Base do ano selecionado =========
+# ========= Base do ano selecionado (para seções 1 e 3) =========
 df_ano = df_prog[
     (df_prog["ano_safra"] == ano_ref)
     & (~df_prog["produto_clean"].str.lower().eq("total"))
 ].copy()
 
-# ========= Tabela de progresso =========
-st.subheader("Progresso por cultura")
+# ========= Seção 1) Progresso por cultura =========
+st.subheader(f"Progresso por cultura — Safra {ano_ref}")
 cols_show = [
     "grupo",
     "produto_clean",
@@ -258,30 +259,9 @@ st.dataframe(
     use_container_width=True,
 )
 
-# Downloads dos dados
-dl1, dl2 = st.columns(2)
-with dl1:
-    st.download_button(
-        "Baixar tidy (CSV)",
-        data=to_csv_download(tidy),
-        file_name="ibge_agro_tidy.csv",
-        mime="text/csv",
-        use_container_width=True,
-    )
-with dl2:
-    st.download_button(
-        "Baixar indicadores (CSV)",
-        data=to_csv_download(pivot),
-        file_name="ibge_agro_indicadores.csv",
-        mime="text/csv",
-        use_container_width=True,
-    )
-
 st.divider()
 
-# ========= 1) Análise por métrica =========
-st.subheader("Análise por métrica (ordenado do maior para o menor)")
-
+# ========= Mapa de métricas =========
 metric_map = {
     "Área plantada (ha)": ("area_plantada_ha", 0, "Área plantada (ha)"),
     "Área colhida (ha)": ("area_colhida_ha", 0, "Área colhida (ha)"),
@@ -292,7 +272,107 @@ metric_map = {
     "Produção total estimada (t)": ("producao_total_est_t", 0, "Produção total estimada (t)"),
     "Produtividade (t/ha)": ("produtividade_t_ha", 3, "Produtividade (t/ha)"),
 }
-metric_label = st.radio("Escolha a métrica", list(metric_map.keys()), horizontal=True)
+
+# ========= Seção 2) Comparativo entre anos =========
+st.header("Comparativo entre anos")
+
+c1, c2, c3 = st.columns([1,1,2])
+with c1:
+    metric_comp_label = st.selectbox("Métrica", list(metric_map.keys()), index=3)
+with c2:
+    # sugere últimos dois anos
+    idx_b = len(anos)-1
+    idx_a = max(0, idx_b-1)
+    ano_a = st.selectbox("Ano A", anos, index=idx_a)
+    ano_b = st.selectbox("Ano B", anos, index=idx_b)
+
+metric_col, metric_nd, metric_x_title = metric_map[metric_comp_label]
+
+# agrega por produto nos dois anos
+base_a = (
+    df_prog[df_prog["ano_safra"] == ano_a]
+    .groupby("produto_clean", as_index=False)[metric_col]
+    .sum(numeric_only=True)
+    .rename(columns={metric_col: f"{metric_col}_{ano_a}"})
+)
+base_b = (
+    df_prog[df_prog["ano_safra"] == ano_b]
+    .groupby("produto_clean", as_index=False)[metric_col]
+    .sum(numeric_only=True)
+    .rename(columns={metric_col: f"{metric_col}_{ano_b}"})
+)
+
+cmp = pd.merge(base_a, base_b, on="produto_clean", how="outer").fillna(0.0)
+cmp = cmp[~cmp["produto_clean"].str.lower().eq("total")].copy()
+cmp["delta"] = cmp[f"{metric_col}_{ano_b}"] - cmp[f"{metric_col}_{ano_a}"]
+cmp["delta_abs"] = np.abs(cmp["delta"])
+cmp["delta_pct"] = np.where(
+    cmp[f"{metric_col}_{ano_a}"] != 0,
+    cmp["delta"] / cmp[f"{metric_col}_{ano_a}"],
+    np.nan,
+)
+
+# gráfico agrupado: Ano A vs Ano B (ordenado pela soma)
+fig_group = barh_grouped_sorted(
+    cmp,
+    y_col="produto_clean",
+    x_cols=[f"{metric_col}_{ano_a}", f"{metric_col}_{ano_b}"],
+    labels=[(str(ano_a), metric_nd), (str(ano_b), metric_nd)],
+    topn=topn,
+    title=f"Top {topn} — {metric_x_title}: {ano_a} × {ano_b} (ordenado pela soma)",
+    x_title=metric_x_title,
+)
+st.plotly_chart(fig_group, use_container_width=True)
+
+# gráfico de variação (Δ): maior variação absoluta no topo
+cmp_var = cmp.sort_values("delta_abs", ascending=False).head(topn).copy()
+fig_delta = px.bar(
+    cmp_var,
+    x="delta",
+    y="produto_clean",
+    orientation="h",
+    text=cmp_var["delta"].map(lambda v: fmt_br(v, metric_nd)),
+)
+fig_delta.update_traces(textposition="outside", cliponaxis=False)
+fig_delta.update_layout(
+    title=f"Top {topn} — Variação absoluta (Δ {metric_x_title}) • {ano_b} − {ano_a}",
+    xaxis_title=f"Δ {metric_x_title}",
+    yaxis_title="",
+    yaxis=dict(categoryorder="array", categoryarray=cmp_var["produto_clean"].tolist(), autorange="reversed"),
+    margin=dict(l=10, r=10, t=30, b=10),
+)
+st.plotly_chart(fig_delta, use_container_width=True)
+
+# tabela resumo do comparativo
+st.dataframe(
+    cmp_var.assign(
+        **{
+            f"{metric_col}_{ano_a}": cmp_var[f"{metric_col}_{ano_a}"],
+            f"{metric_col}_{ano_b}": cmp_var[f"{metric_col}_{ano_b}"],
+        }
+    )[
+        ["produto_clean", f"{metric_col}_{ano_a}", f"{metric_col}_{ano_b}", "delta", "delta_pct"]
+    ].rename(
+        columns={
+            f"{metric_col}_{ano_a}": f"{metric_comp_label} {ano_a}",
+            f"{metric_col}_{ano_b}": f"{metric_comp_label} {ano_b}",
+            "delta": f"Δ {metric_comp_label} ({ano_b} − {ano_a})",
+            "delta_pct": "% Δ",
+        }
+    ).style.format(
+        {f"{metric_comp_label} {ano_a}": "{:,.0f}",
+         f"{metric_comp_label} {ano_b}": "{:,.0f}",
+         f"Δ {metric_comp_label} ({ano_b} − {ano_a})": "{:,.0f}",
+         "% Δ": "{:.1%}"}
+    ),
+    use_container_width=True,
+)
+
+st.divider()
+
+# ========= Seção 3) Análise por métrica (um ano) =========
+st.subheader(f"Análise por métrica — Safra {ano_ref} (ordenado do maior para o menor)")
+metric_label = st.radio("Escolha a métrica", list(metric_map.keys()), horizontal=True, index=3)
 col, nd, x_title = metric_map[metric_label]
 
 fig_metric = barh_sorted(
@@ -307,23 +387,8 @@ st.plotly_chart(fig_metric, use_container_width=True)
 
 st.divider()
 
-# ========= 2) Comparativo: Produção realizada vs projetada =========
-st.subheader(f"Comparativo — Produção realizada vs projetada • Top {topn}")
-fig_cmp = barh_grouped_sorted(
-    df_ano,
-    y_col="produto_clean",
-    x_cols=["producao_realizada_t_calc", "producao_pendente_t_est"],
-    labels=[("Realizada (t)", 0), ("Projetada/Pendente (t)", 0)],
-    topn=topn,
-    title=f"Top {topn} por soma (Realizada + Projetada) • Safra {ano_ref}",
-    x_title="Toneladas (t)",
-)
-st.plotly_chart(fig_cmp, use_container_width=True)
-
-st.divider()
-
-# ========= 3) Ranking clássico (produção/produtividade) =========
-st.subheader("Ranking por produção / produtividade")
+# ========= Seção 4) Ranking clássico (produção/produtividade) =========
+st.subheader(f"Ranking por produção / produtividade — Safra {ano_ref}")
 metric_opt = st.radio("Métrica do ranking", ["Produção (t)", "Produtividade (t/ha)"], horizontal=True)
 
 if metric_opt == "Produção (t)":
@@ -351,5 +416,6 @@ st.plotly_chart(fig_rank, use_container_width=True)
 
 st.caption(
     "Notas: estimativas baseadas no LSPA (IBGE) do mês de referência. "
-    "Produção/área pendente assumem produtividade estável até o fim da safra."
+    "Produção/área pendente assumem produtividade estável até o fim da safra. "
+    "Em culturas com área colhida muito baixa, a produtividade pode ficar instável."
 )
